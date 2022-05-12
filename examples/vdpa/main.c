@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/eventfd.h>
 
 #include <rte_ethdev.h>
 #include <rte_malloc.h>
@@ -20,6 +21,9 @@
 #include <cmdline_parse_string.h>
 #include <cmdline_parse_num.h>
 #include <cmdline.h>
+
+#include <jsonrpc-c.h>
+#include <jsonrpc-client.h>
 
 #define MAX_PATH_LEN 128
 #define MAX_VDPA_SAMPLE_PORTS 1024
@@ -157,6 +161,195 @@ static const struct rte_vhost_device_ops vdpa_sample_devops = {
 	.new_device = new_device,
 	.destroy_device = destroy_device,
 };
+
+/* VDPA RPC */
+#define VDPA_LOCAL_HOST "127.0.0.1"
+
+enum {
+	VDPA_RPC_PORT = 12190,
+};
+
+#define VDPA_RPC_JSON_EMPTY_SZ 4
+#define VDPA_RPC_PARAM_SZ 256
+
+struct vdpa_rpc_context {
+	struct jrpc_server	rpc_server;
+	pthread_t		rpc_server_tid;
+	pthread_mutex_t		rpc_lock;
+};
+static struct vdpa_rpc_context vdpa_rpc_ctx;
+
+static cJSON *get_dev_info(void)
+{
+	cJSON *device = NULL;
+
+	device = cJSON_CreateObject();
+
+	/*struct virtoi_mi_pf_dev *virtio_mi_pf_dev_get(const char *pf_name); */
+	cJSON_AddNumberToObject(device, "vid", 123);
+	return device;
+}
+
+static cJSON *
+rpc_device_info(void)
+{
+	cJSON *ret = NULL;
+
+	ret = get_dev_info();
+	return ret;
+}
+
+cJSON *mgmtpf(jrpc_context *ctx, cJSON *params, cJSON *id)
+{
+	cJSON *pf_add = cJSON_GetObjectItem(params, "add");
+	cJSON *pf_remove = cJSON_GetObjectItem(params, "remove");
+	cJSON *pf_list = cJSON_GetObjectItem(params, "list");
+	cJSON *pf_dev = cJSON_GetObjectItem(params, "dev");
+	cJSON *devices = cJSON_CreateArray();
+	cJSON *result = cJSON_CreateObject();
+	struct vdpa_rpc_context *rpc_ctx;
+	cJSON *device;
+
+	RTE_LOG(ERR, VDPA, "lizh cJSON mgmtpf...start \n");
+	rpc_ctx = (struct virtnet_rpc_context *)ctx->data;
+	pthread_mutex_lock(&rpc_ctx->rpc_lock);
+	if (pf_add) {
+		/* Parse PCI device name*/
+		RTE_LOG(ERR, VDPA, "lizh cJSON mgmtpf.pf_add %s:%d pf_dev %s: %s...start \n", pf_add->string, pf_add->valueint, pf_dev->string, pf_dev->valuestring);
+		/*int virtio_mi_pf_dev_add(const char *pf_name  0000:04:00.0 }; */
+	}
+	if (pf_remove) {
+		/* Parse PCI device name*/
+		RTE_LOG(ERR, VDPA, "lizh cJSON mgmtpf.pf_remove %s:%d pf_dev %s:%s ..start \n", pf_remove->string, pf_remove->valueint, pf_dev->string, pf_dev->valuestring);
+		/*int virtio_mi_pf_dev_remove(const char *pf_name); */
+	}
+	if (pf_list) {
+		RTE_LOG(ERR, VDPA, "lizh cJSON mgmtpf.pf_list %s:%d ..start \n", pf_list->string, pf_list->valueint);
+		device = rpc_device_info();
+		cJSON_AddItemToArray(devices, device);
+		cJSON_AddItemToObject(result, "devices", devices);
+	}
+	RTE_LOG(ERR, VDPA, "lizh cJSON mgmtpf...done \n");
+	pthread_mutex_unlock(&rpc_ctx->rpc_lock);
+	return result;
+}
+
+cJSON *mgmtvf(jrpc_context *ctx, cJSON *params, cJSON *id)
+{
+	cJSON *vf_add = cJSON_GetObjectItem(params, "add");
+	cJSON *vf_remove = cJSON_GetObjectItem(params, "remove");
+	cJSON *vf_list = cJSON_GetObjectItem(params, "list");
+	cJSON *vf_info = cJSON_GetObjectItem(params, "info");
+	cJSON *vf_dev = cJSON_GetObjectItem(params, "vfdev");
+	cJSON *pf_dev = cJSON_GetObjectItem(params, "mgmtpf");
+	cJSON *devices = cJSON_CreateArray();
+	cJSON *result = cJSON_CreateObject();
+	struct vdpa_rpc_context *rpc_ctx;
+	cJSON *device;
+
+	RTE_LOG(ERR, VDPA, "lizh cJSON mgmtvf...start \n");
+	rpc_ctx = (struct virtnet_rpc_context *)ctx->data;
+	pthread_mutex_lock(&rpc_ctx->rpc_lock);
+	if (vf_add && vf_dev && pf_dev) {
+		/* Parse PCI device name*/
+		RTE_LOG(ERR, VDPA, "lizh cJSON mgmtvf.vf_add %s:%d pf_dev %s:%s vf_dev %s:%s...start \n",
+		vf_add->string, vf_add->valueint, pf_dev->string, pf_dev->valuestring, vf_dev->string, vf_dev->valuestring);
+	}
+	if (vf_remove && vf_dev) {
+		/* Parse PCI device name*/
+		RTE_LOG(ERR, VDPA, "lizh cJSON mgmtvf.vf_remove %s:%d vf_dev %s : %s...start \n",
+			vf_remove->string, vf_remove->valueint, vf_dev->string, vf_dev->valuestring);
+	}
+	if (vf_list && pf_dev) {
+		RTE_LOG(ERR, VDPA, "lizh cJSON mgmtvf.vf_list pf_dev %s:%s...start \n", pf_dev->string, pf_dev->valuestring);
+		device = rpc_device_info();
+		cJSON_AddItemToArray(devices, device);
+		cJSON_AddItemToObject(result, "devices", devices);
+	}
+	if (vf_info && vf_dev) {
+		/* Parse PCI device name*/
+		RTE_LOG(ERR, VDPA, "lizh cJSON mgmtvf.vf_info %s:%d vf_dev %s : %s...start \n",
+			vf_info->string, vf_info->valueint, vf_dev->string, vf_dev->valuestring);
+	}
+	RTE_LOG(ERR, VDPA, "lizh cJSON mgmtvf...done \n");
+	pthread_mutex_unlock(&rpc_ctx->rpc_lock);
+	return result;
+}
+
+static void *vdpa_rpc_handler(void *ctx)
+{
+	struct vdpa_rpc_context *rpc_ctx;
+
+	rpc_ctx = (struct vdpa_rpc_context *)ctx;
+	jrpc_server_init(&rpc_ctx->rpc_server, VDPA_RPC_PORT);
+	jrpc_register_procedure(&rpc_ctx->rpc_server, mgmtpf, "mgmtpf", ctx);
+	jrpc_register_procedure(&rpc_ctx->rpc_server, mgmtvf, "vf", ctx);
+	jrpc_server_run(&rpc_ctx->rpc_server);
+	pthread_exit(NULL);
+}
+
+static int
+vdpa_rpc_start(struct vdpa_rpc_context *rpc_ctx)
+{
+	const struct sched_param sp = {
+		.sched_priority = sched_get_priority_max(SCHED_RR),
+	};
+	rte_cpuset_t cpuset;
+	pthread_attr_t attr;
+	char name[32];
+	int ret;
+
+	RTE_LOG(ERR, VDPA, "lizh mlx5_vdpa_rpc_start...start \n");
+	pthread_attr_init(&attr);
+	ret = pthread_attr_setschedpolicy(&attr, SCHED_RR);
+	if (ret) {
+		RTE_LOG(ERR, VDPA, "Failed to set thread sched policy = RR.\n");
+		return -1;
+	}
+	ret = pthread_attr_setschedparam(&attr, &sp);
+	if (ret) {
+		RTE_LOG(ERR, VDPA, "Failed to set thread priority.\n");
+		return -1;
+	}
+	ret = pthread_create(&rpc_ctx->rpc_server_tid,
+				&attr, vdpa_rpc_handler, (void *)rpc_ctx);
+	if (ret) {
+		RTE_LOG(ERR, VDPA, "Failed to create vdpa rpc-thread.\n");
+		return -1;
+	}
+	CPU_ZERO(&cpuset);
+	CPU_SET(0, &cpuset);
+	ret = pthread_setaffinity_np(
+				rpc_ctx->rpc_server_tid,
+				sizeof(cpuset), &cpuset);
+	if (ret) {
+		RTE_LOG(ERR, VDPA, "Failed to set thread affinity for "
+		"vdpa rpc-thread.\n");
+		return -1;
+	}
+	snprintf(name, sizeof(name), "vDPA-RPC");
+	ret = pthread_setname_np(rpc_ctx->rpc_server_tid, name);
+	if (ret)
+		RTE_LOG(ERR, VDPA, "Failed to set vdpa rpc-thread name %s.\n", name);
+	else
+		RTE_LOG(DEBUG, VDPA, "Thread name: %s.\n", name);
+	pthread_mutex_init(&rpc_ctx->rpc_lock, NULL);
+	RTE_LOG(ERR, VDPA, "lizh mlx5_vdpa_rpc_start...done\n");
+	return 0;
+}
+
+static void
+vdpa_rpc_stop(struct vdpa_rpc_context *rpc_ctx)
+{
+	void *status;
+
+	RTE_LOG(ERR, VDPA, "lizh mlx5_vdpa_rpc_stop...start\n");
+	pthread_mutex_destroy(&rpc_ctx->rpc_lock);
+	pthread_cancel(rpc_ctx->rpc_server_tid);
+	pthread_join(rpc_ctx->rpc_server_tid, &status);
+	jrpc_server_stop(&rpc_ctx->rpc_server);
+	RTE_LOG(ERR, VDPA, "lizh mlx5_vdpa_rpc_stop...done\n");
+}
 
 static int
 start_vdpa(struct vdpa_port *vport)
@@ -529,6 +722,7 @@ main(int argc, char *argv[])
 	struct rte_device *dev;
 	struct rte_dev_iterator dev_iter;
 
+	vdpa_rpc_start(&vdpa_rpc_ctx);
 	ret = rte_eal_init(argc, argv);
 	if (ret < 0)
 		rte_exit(EXIT_FAILURE, "eal init failed\n");
@@ -575,7 +769,7 @@ main(int argc, char *argv[])
 		}
 		vdpa_sample_quit();
 	}
-
+	vdpa_rpc_stop(&vdpa_rpc_ctx);
 	/* clean up the EAL */
 	rte_eal_cleanup();
 

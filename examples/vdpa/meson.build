@@ -11,7 +11,7 @@ if not is_linux
     subdir_done()
 endif
 
-deps += 'vhost'
+deps += ['vhost', 'jsonrpc']
 allow_experimental_apis = true
 sources = files(
         'main.c',
